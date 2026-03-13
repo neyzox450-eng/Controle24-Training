@@ -1,142 +1,97 @@
-from flask import Flask, request, redirect, session, render_template_string, url_for
 import os
 import requests
+import smtplib
+from email.mime.text import MIMEText
+from flask import Flask, redirect, request, session
+
+app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "secret123")
+
+DISCORD_CLIENT_ID = os.environ.get("DISCORD_CLIENT_ID", "YOUR_CLIENT_ID")
+DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET", "YOUR_CLIENT_SECRET")
+DISCORD_REDIRECT_URI = os.environ.get("DISCORD_REDIRECT_URI", "https://controle24-training-production.up.railway.app/callback")
+
+GMAIL_EMAIL = os.environ.get("GMAIL_EMAIL", "yourgmail@gmail.com")
+GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "gmailapppassword")
+
+DISCORD_API = "https://discord.com/api"
+
 
 @app.route("/")
 def home():
-    return "Controle24 Training Website Online"
+    return """
+    <h1>Controle24 Training</h1>
+    <p>Welcome to the Controle24 training platform.</p>
+    <a href='/login'>Login with Discord</a>
+    """
 
-app = Flask(__name__)
-app.secret_key = os.environ.get("SECRET_KEY","devkey")
-
-DISCORD_CLIENT_ID = os.environ.get("DISCORD_CLIENT_ID","")
-DISCORD_CLIENT_SECRET = os.environ.get("DISCORD_CLIENT_SECRET","")
-DISCORD_REDIRECT_URI=https://controle24-training-production.up.railway.app/callback
-
-HTML = """
-<!DOCTYPE html>
-<html>
-<head>
-<title>Controle24</title>
-<style>
-body{
-font-family:Arial;
-background:#0b0f1a;
-color:white;
-text-align:center;
-padding:40px
-}
-
-button{
-padding:12px 20px;
-background:#5865F2;
-border:none;
-border-radius:8px;
-color:white;
-font-size:16px;
-cursor:pointer
-}
-
-.card{
-background:#151b2c;
-padding:30px;
-border-radius:12px;
-display:inline-block
-}
-</style>
-</head>
-
-<body>
-
-<div class="card">
-
-<h1>Controle24</h1>
-
-{% if not logged_in %}
-
-<p>Connecte toi avec Discord</p>
-
-<a href="/login">
-<button>Login Discord</button>
-</a>
-
-{% else %}
-
-<h2>Bienvenue {{username}}</h2>
-
-<p>Tu es connecté.</p>
-
-<a href="/logout">
-<button>Logout</button>
-</a>
-
-{% endif %}
-
-</div>
-
-</body>
-</html>
-"""
-
-@app.route("/")
-def index():
-    return render_template_string(
-        HTML,
-        logged_in=bool(session.get("discord_id")),
-        username=session.get("discord_name","")
-    )
 
 @app.route("/login")
 def login():
-
-    url = (
-        "https://discord.com/api/oauth2/authorize"
-        "?client_id="+DISCORD_CLIENT_ID+
-        "&redirect_uri="+DISCORD_REDIRECT_URI+
-        "&response_type=code"
-        "&scope=identify"
+    return redirect(
+        f"{DISCORD_API}/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&redirect_uri={DISCORD_REDIRECT_URI}&response_type=code&scope=identify%20email"
     )
 
-    return redirect(url)
 
 @app.route("/callback")
 def callback():
 
     code = request.args.get("code")
 
-    if not code:
-        return redirect("/")
-
     data = {
-        "client_id":DISCORD_CLIENT_ID,
-        "client_secret":DISCORD_CLIENT_SECRET,
-        "grant_type":"authorization_code",
-        "code":code,
-        "redirect_uri":DISCORD_REDIRECT_URI
+        "client_id": DISCORD_CLIENT_ID,
+        "client_secret": DISCORD_CLIENT_SECRET,
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": DISCORD_REDIRECT_URI
     }
 
-    r = requests.post(
-        "https://discord.com/api/oauth2/token",
-        data=data,
-        headers={"Content-Type":"application/x-www-form-urlencoded"}
-    )
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
 
+    r = requests.post(f"{DISCORD_API}/oauth2/token", data=data, headers=headers)
     token = r.json().get("access_token")
 
     user = requests.get(
-        "https://discord.com/api/users/@me",
-        headers={"Authorization":"Bearer "+token}
+        f"{DISCORD_API}/users/@me",
+        headers={"Authorization": f"Bearer {token}"}
     ).json()
 
-    session["discord_id"] = user["id"]
-    session["discord_name"] = user["username"]
+    username = user["username"]
+    email = user.get("email", "No email")
 
-    return redirect("/")
+    send_email(username, email)
 
-@app.route("/logout")
-def logout():
-    session.clear()
-    return redirect("/")
+    return f"""
+    <h1>Login successful</h1>
+    <p>Welcome {username}</p>
+    """
+
+
+def send_email(username, email):
+
+    msg = MIMEText(f"""
+New login on Controle24 Training
+
+User: {username}
+Email: {email}
+""")
+
+    msg["Subject"] = "New Controle24 Login"
+    msg["From"] = GMAIL_EMAIL
+    msg["To"] = GMAIL_EMAIL
+
+    try:
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(GMAIL_EMAIL, GMAIL_APP_PASSWORD)
+        server.sendmail(GMAIL_EMAIL, GMAIL_EMAIL, msg.as_string())
+        server.quit()
+    except:
+        print("Email failed")
+
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)))
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
