@@ -8,6 +8,7 @@ from urllib.parse import urlencode
 import requests
 from flask import Flask, request, redirect, session, url_for, render_template_string, flash, g
 
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key")
 
@@ -168,6 +169,9 @@ BASE_HTML = """
             font-family:'Rajdhani',sans-serif;
             font-size:1rem;
             clip-path:polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+        }
+        select option {
+            color:#000;
         }
         textarea{min-height:130px; resize:vertical}
         input:focus, select:focus, textarea:focus{
@@ -545,7 +549,8 @@ def close_db(exception=None):
 
 def init_db():
     db = get_db()
-    db.execute("""
+    db.execute(
+        """
         CREATE TABLE IF NOT EXISTS requests (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             discord_id TEXT NOT NULL,
@@ -557,28 +562,37 @@ def init_db():
             disponibilites TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending'
         )
-    """)
-    db.execute("""
+        """
+    )
+    db.execute(
+        """
         CREATE TABLE IF NOT EXISTS instructors (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             discord_id TEXT NOT NULL UNIQUE,
             nom TEXT NOT NULL
         )
-    """)
+        """
+    )
     db.commit()
 
 
 def render_page(content_template, **context):
     content = render_template_string(content_template, **context)
-    return render_template_string(BASE_HTML, content=content, is_staff_session=is_staff_session, **context)
+    return render_template_string(
+        BASE_HTML,
+        content=content,
+        is_staff_session=is_staff_session,
+        **context
+    )
 
 
 def send_email(to_email, subject, body):
     if not GMAIL_ADDRESS or not GMAIL_PASSWORD:
         print("Gmail credentials are missing. Email not sent.")
         return False
+
     try:
-        msg = MIMEText(body)
+        msg = MIMEText(body, "plain", "utf-8")
         msg["Subject"] = subject
         msg["From"] = GMAIL_ADDRESS
         msg["To"] = to_email
@@ -587,6 +601,7 @@ def send_email(to_email, subject, body):
             server.starttls()
             server.login(GMAIL_ADDRESS, GMAIL_PASSWORD)
             server.sendmail(GMAIL_ADDRESS, [to_email], msg.as_string())
+
         return True
     except Exception as e:
         print(f"Email send error: {e}")
@@ -595,7 +610,10 @@ def send_email(to_email, subject, body):
 
 def is_instructor(discord_id):
     db = get_db()
-    row = db.execute("SELECT id FROM instructors WHERE discord_id = ?", (discord_id,)).fetchone()
+    row = db.execute(
+        "SELECT id FROM instructors WHERE discord_id = ?",
+        (discord_id,)
+    ).fetchone()
     return row is not None
 
 
@@ -603,6 +621,7 @@ def is_staff_session():
     user = session.get("user")
     if not user:
         return False
+
     discord_id = user.get("id")
     return discord_id == ADMIN_ID or is_instructor(discord_id)
 
@@ -653,6 +672,10 @@ def index():
 
 @app.route("/login")
 def login():
+    if not DISCORD_CLIENT_ID or not DISCORD_CLIENT_SECRET or not DISCORD_REDIRECT_URI:
+        flash("Discord OAuth variables are missing on Railway.", "error")
+        return redirect(url_for("index"))
+
     params = {
         "client_id": DISCORD_CLIENT_ID,
         "redirect_uri": DISCORD_REDIRECT_URI,
@@ -678,11 +701,12 @@ def callback():
         "redirect_uri": DISCORD_REDIRECT_URI,
         "scope": "identify email",
     }
+
     headers = {
         "Content-Type": "application/x-www-form-urlencoded"
     }
 
-    token_response = requests.post(DISCORD_TOKEN_URL, data=data, headers=headers)
+    token_response = requests.post(DISCORD_TOKEN_URL, data=data, headers=headers, timeout=20)
     if token_response.status_code != 200:
         flash("Failed to retrieve Discord access token.", "error")
         return redirect(url_for("index"))
@@ -694,18 +718,22 @@ def callback():
 
     user_response = requests.get(
         DISCORD_USER_URL,
-        headers={"Authorization": f"Bearer {access_token}"}
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=20
     )
+
     if user_response.status_code != 200:
         flash("Failed to retrieve Discord user information.", "error")
         return redirect(url_for("index"))
 
     user_data = user_response.json()
+
     session["user"] = {
-        "id": str(user_data.get("id")),
+        "id": str(user_data.get("id", "")),
         "username": user_data.get("username", "UnknownUser"),
         "email": user_data.get("email", ""),
     }
+
     flash("Successfully logged in with Discord.", "success")
     return redirect(url_for("index"))
 
@@ -733,18 +761,23 @@ def request_training():
             return redirect(url_for("request_training"))
 
         db = get_db()
-        db.execute("""
-            INSERT INTO requests (discord_id, nom, prenom, email, rang_actuel, rang_vise, disponibilites, status)
+        db.execute(
+            """
+            INSERT INTO requests (
+                discord_id, nom, prenom, email, rang_actuel, rang_vise, disponibilites, status
+            )
             VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
-        """, (
-            session["user"]["id"],
-            nom,
-            prenom,
-            email,
-            rang_actuel,
-            rang_vise,
-            disponibilites
-        ))
+            """,
+            (
+                session["user"]["id"],
+                nom,
+                prenom,
+                email,
+                rang_actuel,
+                rang_vise,
+                disponibilites,
+            ),
+        )
         db.commit()
 
         send_email(
@@ -759,7 +792,7 @@ Your request will be reviewed by an instructor.
 You will receive another email once your request has been accepted or refused.
 
 Best regards,
-Control 24 Training Department"""
+Control 24 Training Department""",
         )
 
         flash("Your training request has been submitted successfully.", "success")
@@ -772,9 +805,11 @@ Control 24 Training Department"""
 @staff_required
 def dashboard():
     db = get_db()
+
     requests_list = db.execute(
         "SELECT * FROM requests WHERE status = 'pending' ORDER BY id DESC"
     ).fetchall()
+
     instructors = db.execute(
         "SELECT * FROM instructors ORDER BY id DESC"
     ).fetchall()
@@ -784,7 +819,7 @@ def dashboard():
         title="Staff Dashboard",
         requests_list=requests_list,
         instructors=instructors,
-        admin_id=ADMIN_ID
+        admin_id=ADMIN_ID,
     )
 
 
@@ -792,12 +827,20 @@ def dashboard():
 @staff_required
 def accept_request(request_id):
     db = get_db()
-    req = db.execute("SELECT * FROM requests WHERE id = ?", (request_id,)).fetchone()
+
+    req = db.execute(
+        "SELECT * FROM requests WHERE id = ?",
+        (request_id,)
+    ).fetchone()
+
     if not req:
         flash("Request not found.", "error")
         return redirect(url_for("dashboard"))
 
-    db.execute("UPDATE requests SET status = 'accepted' WHERE id = ?", (request_id,))
+    db.execute(
+        "UPDATE requests SET status = 'accepted' WHERE id = ?",
+        (request_id,)
+    )
     db.commit()
 
     send_email(
@@ -815,7 +858,7 @@ You are NOT allowed to contact your instructor first.
 Please wait until they contact you.
 
 Best regards,
-Control 24 Training Department"""
+Control 24 Training Department""",
     )
 
     flash(f"Request #{request_id} accepted and confirmation email sent.", "success")
@@ -826,12 +869,20 @@ Control 24 Training Department"""
 @staff_required
 def reject_request(request_id):
     db = get_db()
-    req = db.execute("SELECT * FROM requests WHERE id = ?", (request_id,)).fetchone()
+
+    req = db.execute(
+        "SELECT * FROM requests WHERE id = ?",
+        (request_id,)
+    ).fetchone()
+
     if not req:
         flash("Request not found.", "error")
         return redirect(url_for("dashboard"))
 
-    db.execute("UPDATE requests SET status = 'refused' WHERE id = ?", (request_id,))
+    db.execute(
+        "UPDATE requests SET status = 'refused' WHERE id = ?",
+        (request_id,)
+    )
     db.commit()
 
     send_email(
@@ -844,7 +895,7 @@ Unfortunately your training request has been refused.
 You may submit another request in the future.
 
 Best regards,
-Control 24 Training Department"""
+Control 24 Training Department""",
     )
 
     flash(f"Request #{request_id} refused and email sent.", "info")
@@ -866,7 +917,7 @@ def add_instructor():
     try:
         db.execute(
             "INSERT INTO instructors (discord_id, nom) VALUES (?, ?)",
-            (discord_id, nom)
+            (discord_id, nom),
         )
         db.commit()
         flash("Instructor added successfully.", "success")
@@ -888,4 +939,5 @@ def remove_instructor(instructor_id):
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
