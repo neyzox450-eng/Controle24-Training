@@ -2,6 +2,10 @@ from flask import Flask, request, redirect, session, render_template_string, url
 import os
 import requests
 
+@app.route("/")
+def home():
+    return "Controle24 Training Website Online"
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY","devkey")
 
